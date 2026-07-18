@@ -62,6 +62,7 @@
                             <select id="provider-filter" v-model="providerFilter" @mousedown.stop class="h-8 w-36 appearance-none rounded-md border-0 bg-[#2a2626] pl-2.5 pr-7 text-xs text-[#d4d2d2] outline-none focus:ring-1 focus:ring-[#5a5858]">
                                 <option value="all">All accounts</option>
                                 <option value="ChatGPT">ChatGPT</option>
+                                <option value="Grok">Grok</option>
                                 <option value="OpenCode Go">OpenCode Go</option>
                             </select>
                             <svg aria-hidden="true" viewBox="0 0 16 16" fill="#6b6969" class="pointer-events-none absolute right-2 size-2.5">
@@ -105,7 +106,7 @@
                                 </svg>
                             </div>
                             <p class="text-base font-semibold tracking-tight text-ink">No usage data</p>
-                            <p class="mt-2 text-sm leading-6 text-muted">Connect ChatGPT or add an OpenCode cookie, then refresh to load usage.</p>
+                            <p class="mt-2 text-sm leading-6 text-muted">Connect ChatGPT, Grok, or add an OpenCode cookie, then refresh to load usage.</p>
                             <button @click="openModal" class="transition active:scale-95 mt-5 inline-flex items-center gap-2 rounded-md bg-[#131010] px-4 py-2 text-sm font-medium text-white hover:bg-[#3d3b3b]">
                                 <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
                                     <path d="M8 1.5C8 1.22386 7.77614 1 7.5 1C7.22386 1 7 1.22386 7 1.5V7H1.5C1.22386 7 1 7.22386 1 7.5C1 7.77614 1.22386 8 1.5 8H7V13.5C7 13.7761 7.22386 14 7.5 14C7.77614 14 8 13.7761 8 13.5V8H13.5C13.7761 8 14 7.77614 14 7.5C14 7.22386 13.7761 7 13.5 7H8V1.5Z"></path>
@@ -161,21 +162,22 @@
                                             <p class="truncate text-sm font-medium text-ink">{{ row.email }}</p>
                                             <p class="text-xs text-muted">{{ row.provider }}</p>
                                         </div>
-                                        <span v-if="row.activeInOpenCode" class="ml-1 shrink-0 rounded-md bg-[#eae8e8] px-2 py-0.5 text-xs font-medium text-muted"> Active </span>
+                                        <span v-if="row.activeInOpenCode" class="ml-1 shrink-0 rounded-md bg-[#eae8e8] px-2 py-0.5 text-xs font-medium text-muted">Active</span>
+                                        <span v-if="row.email === 'BOT FLAG'" class="ml-1 shrink-0 rounded-md bg-[#fff3cd] px-2 py-0.5 text-xs font-medium text-[#856404]">BOT</span>
                                     </div>
                                 </td>
-                                <td v-if="row.error" colspan="4" class="p-4 text-sm font-medium text-[#5a5858]">{{ row.error }}</td>
+                                <td v-if="row.error" colspan="4" class="p-4 text-sm font-medium text-[#e81123]">{{ row.error }}</td>
                                 <template v-else>
                                     <td class="p-4 align-middle">
                                         <div v-if="row.keys.length" class="flex justify-center gap-1.5">
-                                            <button v-for="(key, keyIndex) in row.keys" :key="key" @click="copyApiKey(row.accountIndex, keyIndex)" class="transition active:scale-95 grid size-8 place-items-center rounded-md text-muted hover:bg-[#eae8e8] hover:text-ink focus-visible:outline-2 focus-visible:outline-brand">
+                                            <button v-for="(key, keyIndex) in row.keys" :key="key" @click="copyApiKey(row.accountIndex, keyIndex)" aria-label="Copy API key" class="transition active:scale-95 grid size-8 place-items-center rounded-md text-muted hover:bg-[#eae8e8] hover:text-ink focus-visible:outline-2 focus-visible:outline-brand">
                                                 <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-3.5">
                                                     <path d="M3 5V12.73C2.4 12.38 2 11.74 2 11V5C2 2.79 3.79 1 6 1H9C9.74 1 10.38 1.4 10.73 2H6C4.35 2 3 3.35 3 5ZM11 15H6C4.897 15 4 14.103 4 13V5C4 3.897 4.897 3 6 3H11C12.103 3 13 3.897 13 5V13C13 14.103 12.103 15 11 15ZM12 5C12 4.448 11.552 4 11 4H6C5.448 4 5 4.448 5 5V13C5 13.552 5.448 14 6 14H11C11.552 14 12 13.552 12 13V5Z"></path>
                                                 </svg>
                                             </button>
                                         </div>
                                         <div v-else class="flex items-center justify-center gap-2">
-                                            <button v-if="row.provider === 'ChatGPT' && !row.activeInOpenCode" @click="switchOpenAiAuth(row.accountIndex)" class="transition active:scale-95 grid size-8 place-items-center rounded-md text-muted hover:bg-[#eae8e8] hover:text-ink">
+                                            <button v-if="(row.provider === 'ChatGPT' || row.provider === 'Grok') && !row.activeInOpenCode" @click="row.provider === 'Grok' ? switchGrokAuth(row.accountIndex) : switchOpenAiAuth(row.accountIndex)" aria-label="Switch active account in OpenCode" class="transition active:scale-95 grid size-8 place-items-center rounded-md text-muted hover:bg-[#eae8e8] hover:text-ink focus-visible:outline-2 focus-visible:outline-brand">
                                                 <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
                                                     <path d="M11.3536 1.64645C11.1583 1.45118 10.8417 1.45118 10.6464 1.64645C10.4512 1.84171 10.4512 2.15829 10.6464 2.35355L12.2929 4H2.5C2.22386 4 2 4.22386 2 4.5C2 4.77614 2.22386 5 2.5 5H12.2929L10.6464 6.64645C10.4512 6.84171 10.4512 7.15829 10.6464 7.35355C10.8417 7.54882 11.1583 7.54882 11.3536 7.35355L13.8536 4.85355C14.0488 4.65829 14.0488 4.34171 13.8536 4.14645L11.3536 1.64645ZM5.35355 9.35355C5.54882 9.15829 5.54882 8.84171 5.35355 8.64645C5.15829 8.45118 4.84171 8.45118 4.64645 8.64645L2.14645 11.1464C1.95118 11.3417 1.95118 11.6583 2.14645 11.8536L4.64645 14.3536C4.84171 14.5488 5.15829 14.5488 5.35355 14.3536C5.54882 14.1583 5.54882 13.8417 5.35355 13.6464L3.70711 12H13.5C13.7761 12 14 11.7761 14 11.5C14 11.2239 13.7761 11 13.5 11H3.70711L5.35355 9.35355Z"></path>
                                                 </svg>
@@ -194,7 +196,7 @@
                                     </td>
                                 </template>
                                 <td class="p-4 text-center align-middle">
-                                    <button @click="removeAccount(row.accountIndex)" class="transition active:scale-95 mx-auto grid size-8 place-items-center rounded-md text-muted hover:bg-[#eae8e8] hover:text-[#131010] focus-visible:outline-2 focus-visible:outline-critical">
+                                    <button @click="removeAccount(row.accountIndex)" aria-label="Remove account" class="transition active:scale-95 mx-auto grid size-8 place-items-center rounded-md text-muted hover:bg-[#eae8e8] hover:text-[#131010] focus-visible:outline-2 focus-visible:outline-critical">
                                         <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
                                             <path d="M14 2H10C10 0.897 9.103 0 8 0C6.897 0 6 0.897 6 2H2C1.724 2 1.5 2.224 1.5 2.5C1.5 2.776 1.724 3 2 3H2.54L3.349 12.708C3.456 13.994 4.55 15 5.84 15H10.159C11.449 15 12.543 13.993 12.65 12.708L13.459 3H13.999C14.275 3 14.499 2.776 14.499 2.5C14.499 2.224 14.275 2 13.999 2H14ZM8 1C8.551 1 9 1.449 9 2H7C7 1.449 7.449 1 8 1ZM11.655 12.625C11.591 13.396 10.934 14 10.16 14H5.841C5.067 14 4.41 13.396 4.346 12.625L3.544 3H12.458L11.656 12.625H11.655ZM7 5.5V11.5C7 11.776 6.776 12 6.5 12C6.224 12 6 11.776 6 11.5V5.5C6 5.224 6.224 5 6.5 5C6.776 5 7 5.224 7 5.5ZM10 5.5V11.5C10 11.776 9.776 12 9.5 12C9.224 12 9 11.776 9 11.5V5.5C9 5.224 9.224 5 9.5 5C9.776 5 10 5.224 10 5.5Z"></path>
                                         </svg>
@@ -225,7 +227,7 @@
                         <div class="flex items-start justify-between gap-6 border-b border-line p-5">
                             <div>
                                 <p id="add-account-title" class="text-base font-semibold text-ink">Add account</p>
-                                <p id="add-account-description" class="mt-1.5 text-sm leading-5 text-muted">Connect ChatGPT with OpenAI OAuth, or paste an OpenCode account cookie.</p>
+                                <p id="add-account-description" class="mt-1.5 text-sm leading-5 text-muted">Connect ChatGPT (OAuth) or Grok (from OpenCode xAI auth). Or paste OpenCode cookie.</p>
                             </div>
                             <button type="button" @click="closeModal" class="transition active:scale-95 grid size-8 shrink-0 place-items-center rounded-md text-muted hover:bg-[#f0efef] hover:text-ink">
                                 <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
@@ -234,23 +236,29 @@
                             </button>
                         </div>
                         <div class="p-5">
-                            <button type="button" @click="addOpenAi" :disabled="saving" class="transition active:scale-95 inline-flex h-8 items-center gap-2.5 rounded-md bg-[#131010] px-4 text-sm font-medium text-white shadow-sm hover:bg-[#3d3b3b] disabled:cursor-not-allowed disabled:opacity-50">
-                                <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
-                                    <path d="M13.67 6.1C13.98 5.21 13.91 4.23 13.44 3.42C12.58 1.93 10.72 1.4 9.19996 2.14C8.58996 1.43 7.70996 1 6.75996 1C5.03996 1 3.63996 2.35 3.52996 4.04C2.60996 4.22 1.79996 4.77 1.31996 5.59C0.459957 7.08 0.929957 8.96 2.33996 9.9C2.02996 10.79 2.09996 11.77 2.56996 12.58C3.16996 13.62 4.26996 14.2 5.38996 14.2C5.86996 14.2 6.35996 14.08 6.81996 13.86C7.42996 14.57 8.30996 14.99 9.25996 14.99C10.98 14.99 12.38 13.64 12.49 11.95C13.41 11.77 14.22 11.22 14.7 10.4C15.56 8.91 15.09 7.03 13.68 6.09L13.67 6.1ZM12.57 3.92C12.86 4.43 12.93 5.02 12.8 5.58L10.25 4.11C10.1 4.02 9.89996 4.02 9.74996 4.11L6.49996 5.99V4.84L9.49996 3.11C10.57 2.49 11.95 2.86 12.57 3.93V3.92ZM9.49996 8.87L7.99996 9.74L6.49996 8.87V7.14L7.99996 6.27L9.49996 7.14V8.87ZM4.49996 4.25C4.49996 3.01 5.50996 2 6.74996 2C7.32996 2 7.87996 2.23 8.29996 2.63L5.74996 4.1C5.59996 4.19 5.49996 4.35 5.49996 4.53V8.28L4.49996 7.7V4.24V4.25ZM2.17996 6.08C2.46996 5.57 2.94996 5.22 3.49996 5.05V7.99C3.49996 8.17 3.59996 8.33 3.74996 8.42L6.99996 10.3L5.99996 10.88L2.99996 9.15C1.92996 8.53 1.55996 7.15 2.17996 6.08ZM3.42996 12.08C3.13996 11.57 3.06996 10.98 3.19996 10.42L5.74996 11.89C5.82996 11.93 5.90996 11.96 5.99996 11.96C6.08996 11.96 6.16996 11.94 6.24996 11.89L9.49996 10.01V11.16L6.49996 12.89C5.42996 13.51 4.04996 13.14 3.42996 12.07V12.08ZM11.5 11.75C11.5 12.99 10.49 14 9.24996 14C8.66996 14 8.11996 13.77 7.69996 13.37L10.25 11.9C10.4 11.81 10.5 11.65 10.5 11.47V7.72L11.5 8.3V11.76V11.75ZM13.82 9.92C13.53 10.43 13.05 10.78 12.5 10.95V8.01C12.5 7.83 12.4 7.67 12.25 7.58L8.99996 5.7L9.99996 5.12L13 6.85C14.07 7.47 14.44 8.85 13.82 9.92Z"></path>
-                                </svg>
-                                {{ saving ? 'Connecting...' : 'Connect ChatGPT' }}
-                            </button>
+                            <div class="flex gap-2">
+                                <button type="button" @click="addOpenAi" :disabled="saving" class="transition active:scale-95 flex-1 inline-flex h-8 items-center justify-center gap-2 rounded-md bg-[#131010] px-4 text-sm font-medium text-white shadow-sm hover:bg-[#3d3b3b] disabled:cursor-not-allowed disabled:opacity-50">
+                                    <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
+                                        <path d="M13.67 6.1C13.98 5.21 13.91 4.23 13.44 3.42C12.58 1.93 10.72 1.4 9.19996 2.14C8.58996 1.43 7.70996 1 6.75996 1C5.03996 1 3.63996 2.35 3.52996 4.04C2.60996 4.22 1.79996 4.77 1.31996 5.59C0.459957 7.08 0.929957 8.96 2.33996 9.9C2.02996 10.79 2.09996 11.77 2.56996 12.58C3.16996 13.62 4.26996 14.2 5.38996 14.2C5.86996 14.2 6.35996 14.08 6.81996 13.86C7.42996 14.57 8.30996 14.99 9.25996 14.99C10.98 14.99 12.38 13.64 12.49 11.95C13.41 11.77 14.22 11.22 14.7 10.4C15.56 8.91 15.09 7.03 13.68 6.09L13.67 6.1ZM12.57 3.92C12.86 4.43 12.93 5.02 12.8 5.58L10.25 4.11C10.1 4.02 9.89996 4.02 9.74996 4.11L6.49996 5.99V4.84L9.49996 3.11C10.57 2.49 11.95 2.86 12.57 3.93V3.92ZM9.49996 8.87L7.99996 9.74L6.49996 8.87V7.14L7.99996 6.27L9.49996 7.14V8.87ZM4.49996 4.25C4.49996 3.01 5.50996 2 6.74996 2C7.32996 2 7.87996 2.23 8.29996 2.63L5.74996 4.1C5.59996 4.19 5.49996 4.35 5.49996 4.53V8.28L4.49996 7.7V4.24V4.25ZM2.17996 6.08C2.46996 5.57 2.94996 5.22 3.49996 5.05V7.99C3.49996 8.17 3.59996 8.33 3.74996 8.42L6.99996 10.3L5.99996 10.88L2.99996 9.15C1.92996 8.53 1.55996 7.15 2.17996 6.08ZM3.42996 12.08C3.13996 11.57 3.06996 10.98 3.19996 10.42L5.74996 11.89C5.82996 11.93 5.90996 11.96 5.99996 11.96C6.08996 11.96 6.16996 11.94 6.24996 11.89L9.49996 10.01V11.16L6.49996 12.89C5.42996 13.51 4.04996 13.14 3.42996 12.07V12.08ZM11.5 11.75C11.5 12.99 10.49 14 9.24996 14C8.66996 14 8.11996 13.77 7.69996 13.37L10.25 11.9C10.4 11.81 10.5 11.65 10.5 11.47V7.72L11.5 8.3V11.76V11.75ZM13.82 9.92C13.53 10.43 13.05 10.78 12.5 10.95V8.01C12.5 7.83 12.4 7.67 12.25 7.58L8.99996 5.7L9.99996 5.12L13 6.85C14.07 7.47 14.44 8.85 13.82 9.92Z"></path>
+                                    </svg>
+                                    {{ saving ? 'Connecting...' : 'Connect ChatGPT' }}
+                                </button>
+                                <button type="button" @click="addGrok" :disabled="saving" class="transition active:scale-95 flex-1 inline-flex h-8 items-center justify-center gap-2 rounded-md bg-[#131010] px-4 text-sm font-medium text-white shadow-sm hover:bg-[#3d3b3b] disabled:cursor-not-allowed disabled:opacity-50">
+                                    <img src="https://www.google.com/s2/favicons?sz=64&domain=grok.com" class="size-4 rounded-sm" alt="Grok" />
+                                    {{ saving ? 'Connecting...' : 'Connect Grok' }}
+                                </button>
+                            </div>
                             <p class="my-5 border-t border-line pt-5 text-xs font-medium uppercase tracking-[0.08em] text-muted">or add OpenCode cookie</p>
                             <label class="block text-sm font-medium text-ink" for="cookie">Cookie</label>
                             <textarea id="cookie" v-model="cookie" required autofocus class="scrollbar-slim mt-2.5 h-36 w-full rounded-md border border-line bg-canvas p-3 font-mono text-xs leading-5 outline-none placeholder:font-sans placeholder:text-sm placeholder:text-[#a09e9e] focus:border-brand focus:ring-2 focus:ring-[#5a5858]/15" placeholder="oc_locale=en; auth=..."></textarea>
-                            <p v-if="modalError" class="animate-fade-up mt-2.5 text-sm text-[#5a5858]">{{ modalError }}</p>
+                            <p v-if="modalError" class="animate-fade-up mt-2.5 text-sm text-[#e81123] font-medium">{{ modalError }}</p>
+                            <p v-if="grokCode" class="animate-fade-up mt-2.5 rounded-md border border-line bg-[#f8f7f7] px-4 py-3 text-center font-mono text-2xl font-bold tracking-[0.3em] text-ink select-all">{{ grokCode }}</p>
+                            <p v-if="grokCode" class="mt-1.5 text-xs text-muted">Enter this code on the page opened in your browser.</p>
                         </div>
                         <div class="flex items-center justify-end gap-2.5 border-t border-line bg-[#f8f7f7] px-6 py-4">
                             <button type="button" @click="addCookie" :disabled="saving" class="transition active:scale-95 inline-flex h-8 items-center gap-2 rounded-md bg-[#131010] px-3.5 text-sm font-medium text-white hover:bg-[#3d3b3b] disabled:cursor-not-allowed disabled:opacity-50">
-                                <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="size-4">
-                                    <path d="M14.414 3.207L12.793 1.586C12.421 1.213 11.905 1 11.379 1H3C1.897 1 1 1.897 1 3V13C1 14.103 1.897 15 3 15H13C14.103 15 15 14.103 15 13V4.621C15 4.095 14.787 3.579 14.414 3.207ZM9 2V3.5C9 3.776 8.776 4 8.5 4H6.5C6.224 4 6 3.776 6 3.5V2H9ZM5 14V9.5C5 9.224 5.224 9 5.5 9H10.5C10.776 9 11 9.224 11 9.5V14H5ZM14 13C14 13.551 13.551 14 13 14H12V9.5C12 8.673 11.327 8 10.5 8H5.5C4.673 8 4 8.673 4 9.5V14H3C2.449 14 2 13.551 2 13V3C2 2.449 2.449 2 3 2H5V3.5C5 4.327 5.673 5 6.5 5H8.5C9.327 5 10 4.327 10 3.5V2H11.379C11.642 2 11.9 2.107 12.086 2.293L13.707 3.914C13.893 4.1 14 4.358 14 4.621V13Z"></path>
-                                </svg>
-                                Save
+                                <img src="opencode.svg" alt="OpenCode" class="size-4" />
+                                Connect OpenCode
                             </button>
                         </div>
                     </form>
@@ -307,15 +315,14 @@
 							</div>
 							<span v-else class="block text-center text-muted">-</span>
 						`
-                    },
-
+                    }
                 },
                 data: () => ({
                     accountCount: 0,
                     results: [],
-                    message: 'Loading...',
                     providerFilter: 'all',
                     cookie: '',
+                    grokCode: '',
                     modalError: '',
                     sortKey: null,
                     sortDirection: 'asc',
@@ -332,7 +339,7 @@
                             accountIndex: account.index,
                             email: account.email,
                             provider: account.provider,
-                            providerIcon: account.provider === 'ChatGPT' ? 'https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com' : 'https://www.google.com/s2/favicons?sz=64&domain=opencode.ai',
+                            providerIcon: account.provider === 'ChatGPT' ? 'https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com' : account.provider === 'Grok' ? 'https://www.google.com/s2/favicons?sz=64&domain=grok.com' : 'https://www.google.com/s2/favicons?sz=64&domain=opencode.ai',
                             activeInOpenCode: account.activeInOpenCode,
                             keys: account.keys,
                             rolling: account.rolling,
@@ -353,8 +360,7 @@
                             const comparison = leftValue - rightValue;
                             return this.sortDirection === 'asc' ? comparison : -comparison;
                         });
-                    },
-
+                    }
                 },
                 methods: {
                     sortRows(key) {
@@ -366,10 +372,18 @@
                         this.sortDirection = 'desc';
                     },
                     async minimizeWindow() {
-                        await window.pywebview.api.minimize_window();
+                        try {
+                            await window.pywebview.api.minimize_window();
+                        } catch {
+                            /* noop */
+                        }
                     },
                     async closeWindow() {
-                        await window.pywebview.api.close_window();
+                        try {
+                            await window.pywebview.api.close_window();
+                        } catch {
+                            /* noop */
+                        }
                     },
                     startResize(event, edge) {
                         if (event.button !== 0) return;
@@ -410,13 +424,16 @@
                         document.addEventListener('pointerup', onUp);
                     },
                     async loadAccounts() {
-                        const res = await window.pywebview.api.list_accounts();
-                        this.accountCount = res.count;
-                        this.results = res.results || [];
-                        this.message = this.results.length ? 'Showing cached usage. Refresh for current usage' : res.count ? 'Ready to refresh' : 'Add an account to begin';
+                        try {
+                            const res = await window.pywebview.api.list_accounts();
+                            this.accountCount = res.count;
+                            this.results = res.results || [];
+                        } catch (error) {}
                     },
                     openModal() {
                         this.modalError = '';
+                        this.grokCode = '';
+                        this.cookie = '';
                         this.modalOpen = true;
                     },
                     closeModal() {
@@ -427,9 +444,13 @@
                         this.showMeme = false;
                     },
                     async loadMeme() {
-                        const res = await window.pywebview.api.should_show_meme();
-                        if (!res.show) return;
-                        this.showMeme = true;
+                        try {
+                            const res = await window.pywebview.api.should_show_meme();
+                            if (!res?.show) return;
+                            this.showMeme = true;
+                        } catch {
+                            /* meme is optional, ignore errors */
+                        }
                     },
                     async dismissMeme() {
                         await window.pywebview.api.dismiss_meme();
@@ -447,7 +468,28 @@
                             this.accountCount = res.count;
                             this.cookie = '';
                             this.closeModal();
-                            this.message = 'Account saved. Refresh to load its usage';
+                        } finally {
+                            this.saving = false;
+                        }
+                    },
+                    async addGrok() {
+                        this.saving = true;
+                        this.modalError = '';
+                        this.grokCode = '';
+                        try {
+                            const startRes = await window.pywebview.api.start_grok_device_auth();
+                            if (!startRes.ok) {
+                                this.modalError = startRes.error;
+                                return;
+                            }
+                            this.grokCode = startRes.user_code;
+                            const completeRes = await window.pywebview.api.complete_grok_device_auth(startRes);
+                            if (!completeRes.ok) {
+                                this.modalError = completeRes.error;
+                                return;
+                            }
+                            this.accountCount = completeRes.count;
+                            this.closeModal();
                         } finally {
                             this.saving = false;
                         }
@@ -463,30 +505,23 @@
                             }
                             this.accountCount = res.count;
                             this.closeModal();
-                            this.message = res.message;
                         } finally {
                             this.saving = false;
                         }
                     },
                     async refresh() {
                         this.busy = true;
-                        this.message = 'Refreshing usage...';
                         try {
                             const res = await window.pywebview.api.refresh_all();
                             this.results = res.results;
-                            this.message = 'Usage updated';
                         } catch {
-                            this.message = 'Refresh failed';
                         } finally {
                             this.busy = false;
                         }
                     },
                     async copyApiKey(accountIndex, keyIndex) {
                         const res = await window.pywebview.api.copy_api_key(accountIndex, keyIndex);
-                        if (!res.ok) {
-                            this.message = res.error;
-                            return;
-                        }
+                        if (!res.ok) return;
                         try {
                             await navigator.clipboard.writeText(res.key);
                         } catch {
@@ -497,14 +532,27 @@
                             document.execCommand('copy');
                             input.remove();
                         }
-                        this.message = 'API key copied';
                     },
                     async switchOpenAiAuth(accountIndex) {
-                        const res = await window.pywebview.api.switch_openai_auth(accountIndex);
-                        this.message = res.ok ? 'ChatGPT auth switched in OpenCode' : res.error;
-                        if (res.ok) await this.loadAccounts();
+                        this.busy = true;
+                        try {
+                            const res = await window.pywebview.api.switch_openai_auth(accountIndex);
+                            if (res.ok) await this.loadAccounts();
+                        } finally {
+                            this.busy = false;
+                        }
+                    },
+                    async switchGrokAuth(accountIndex) {
+                        this.busy = true;
+                        try {
+                            const res = await window.pywebview.api.switch_grok_auth(accountIndex);
+                            if (res.ok) await this.loadAccounts();
+                        } finally {
+                            this.busy = false;
+                        }
                     },
                     async removeAccount(index) {
+                        if (!confirm('Remove this account? This cannot be undone.')) return;
                         const res = await window.pywebview.api.remove_account(index);
                         if (!res.ok) return;
                         this.accountCount = res.count;
@@ -514,7 +562,6 @@
                                 ...r,
                                 index: r.index > index ? r.index - 1 : r.index
                             }));
-                        this.message = this.accountCount ? 'Account removed. Refresh to load usage' : 'Add an account to begin';
                     }
                 },
                 mounted() {

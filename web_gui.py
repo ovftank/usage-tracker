@@ -11,7 +11,18 @@ import httpx
 import webview
 from webview.window import FixPoint
 
-from module import AccountResult, authorize_openai, fetch_account, fetch_openai_account
+from module import (
+    AccountResult,
+    authorize_openai,
+    fetch_account,
+    fetch_grok_account,
+    fetch_openai_account,
+    get_xai_user_info,
+    poll_xai_device_token,
+    start_xai_device_auth,
+    _extract_email_from_id_token,
+    _is_grok_bot_account,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,8 +41,9 @@ class Api:
         self._refresh_lock = threading.Lock()
         self.accounts = self._load_accounts()
         imported_openai = self._import_cli_openai_auth()
+        imported_grok = self._import_xai_auth()
         self._results = self._load_usage_cache()
-        if imported_openai:
+        if imported_openai or imported_grok:
             self._results = []
             self._save_accounts()
             self._save_usage_cache()
@@ -108,6 +120,44 @@ class Api:
             return False
 
         self.accounts.append({"type": "openai", "auth": auth})
+        return True
+
+    def _import_xai_auth(self):
+        try:
+            opencode_auth = self._load_opencode_auth()
+        except RuntimeError:
+            return False
+        xai = opencode_auth.get("xai", {})
+        if (
+            not isinstance(xai, dict)
+            or xai.get("type") != "oauth"
+            or not xai.get("access")
+        ):
+            return False
+        if any(
+            account.get("type") == "grok"
+            and account.get("auth", {}).get("access") == xai.get("access")
+            for account in self.accounts
+        ):
+            return False
+        auth_data = {
+            "type": "oauth",
+            "access": xai["access"],
+            "refresh": xai.get("refresh"),
+            "expires": xai.get("expires"),
+        }
+        email = None
+        if "id_token" in xai:
+            email = _extract_email_from_id_token(xai.get("id_token"))
+        if not email:
+            ui = get_xai_user_info(xai["access"])
+            if ui:
+                email = ui.get("email")
+        if _is_grok_bot_account(xai):
+            email = "BOT FLAG"
+        if email:
+            auth_data["email"] = email
+        self.accounts.append({"type": "grok", "auth": auth_data})
         return True
 
     def _load_usage_cache(self):
@@ -200,6 +250,10 @@ class Api:
                 if isinstance(active_go_key, str)
                 else None
             )
+            active_xai = opencode_auth.get("xai", {})
+            active_xai_email = (
+                active_xai.get("email") if isinstance(active_xai, dict) else None
+            )
             results = []
             for result in self._results:
                 index = result.get("index")
@@ -212,6 +266,8 @@ class Api:
                 provider = (
                     "ChatGPT"
                     if self.accounts[index].get("type") == "openai"
+                    else "Grok"
+                    if self.accounts[index].get("type") == "grok"
                     else "OpenCode Go"
                 )
                 fingerprints = result.get("goKeyFingerprints")
@@ -227,10 +283,18 @@ class Api:
                     None,
                 )
                 active = (
-                    provider == "ChatGPT"
-                    and self.accounts[index].get("auth", {}).get("accountId")
-                    == active_account_id
-                ) or active_key_index is not None
+                    (
+                        provider == "ChatGPT"
+                        and self.accounts[index].get("auth", {}).get("accountId")
+                        == active_account_id
+                    )
+                    or active_key_index is not None
+                    or (
+                        provider == "Grok"
+                        and self.accounts[index].get("auth", {}).get("email")
+                        == active_xai_email
+                    )
+                )
                 results.append(
                     {
                         **result,
@@ -261,7 +325,36 @@ class Api:
                 self._save_opencode_auth(opencode_auth)
             except RuntimeError as error:
                 return {"ok": False, "error": str(error)}
-            return {"ok": True, "provider": "openai"}
+            return {
+                "ok": True,
+                "provider": "openai",
+                "message": "ChatGPT auth switched in OpenCode",
+            }
+
+    def switch_grok_auth(self, index: int):
+        with self._lock:
+            if index < 0 or index >= len(self.accounts):
+                return {"ok": False, "error": "Invalid account"}
+            account = self.accounts[index]
+            auth = account.get("auth")
+            if (
+                account.get("type") != "grok"
+                or not isinstance(auth, dict)
+                or not auth.get("access")
+            ):
+                return {"ok": False, "error": "Grok OAuth data is incomplete"}
+
+            try:
+                opencode_auth = self._load_opencode_auth()
+                opencode_auth["xai"] = auth
+                self._save_opencode_auth(opencode_auth)
+            except RuntimeError as error:
+                return {"ok": False, "error": str(error)}
+            return {
+                "ok": True,
+                "provider": "grok",
+                "message": "Grok auth switched in OpenCode",
+            }
 
     def add_cookie(self, cookie: str = ""):
         cookie = (cookie or "").strip()
@@ -271,7 +364,11 @@ class Api:
         with self._lock:
             self.accounts.append({"cookie": cookie})
             self._save_accounts()
-            return {"ok": True, "count": len(self.accounts)}
+            return {
+                "ok": True,
+                "count": len(self.accounts),
+                "message": "OpenCode cookie saved. Refresh to load usage.",
+            }
 
     def add_openai_account(self):
         try:
@@ -279,7 +376,7 @@ class Api:
         except Exception as error:
             return {
                 "ok": False,
-                "error": f"LOL, damn it. @ovftank, fix it bro. {error}",
+                "error": f"OpenAI login failed: {error}",
             }
 
         with self._lock:
@@ -290,6 +387,50 @@ class Api:
                 "count": len(self.accounts),
                 "message": "ChatGPT is in. Refresh to load usage.",
             }
+
+    def start_grok_device_auth(self):
+        try:
+            device = start_xai_device_auth()
+            return {
+                "ok": True,
+                "device_code": device["device_code"],
+                "user_code": device["user_code"],
+                "verification_uri": device.get("verification_uri"),
+                "verification_uri_complete": device.get("verification_uri_complete"),
+                "expires_in": device.get("expires_in"),
+                "interval": device.get("interval"),
+            }
+        except Exception as error:
+            return {"ok": False, "error": str(error)}
+
+    def complete_grok_device_auth(self, device: dict):
+        try:
+            tokens = poll_xai_device_token(device)
+            user_info = get_xai_user_info(tokens["access_token"]) or {}
+            email = user_info.get("email") or _extract_email_from_id_token(
+                tokens.get("id_token")
+            )
+            if _is_grok_bot_account({"access": tokens.get("access_token")}):
+                email = "BOT FLAG"
+            auth = {
+                "type": "oauth",
+                "access": tokens["access_token"],
+                "refresh": tokens.get("refresh_token"),
+                "id_token": tokens.get("id_token"),
+                "expires": int(time.time() * 1000)
+                + int(tokens.get("expires_in", 3600) * 1000),
+                "email": email,
+            }
+            with self._lock:
+                self.accounts.append({"type": "grok", "auth": auth})
+                self._save_accounts()
+            return {
+                "ok": True,
+                "count": len(self.accounts),
+                "message": "Grok connected via device auth. Refresh to load usage.",
+            }
+        except Exception as error:
+            return {"ok": False, "error": str(error)}
 
     def remove_account(self, index: int):
         with self._lock:
@@ -329,7 +470,11 @@ class Api:
         usage = result.usage
         return {
             "index": index,
-            "provider": "ChatGPT" if account.get("type") == "openai" else "OpenCode Go",
+            "provider": "ChatGPT"
+            if account.get("type") == "openai"
+            else "Grok"
+            if account.get("type") == "grok"
+            else "OpenCode Go",
             "email": result.email,
             "rolling": [usage.rolling.percent, usage.rolling.reset_in_sec]
             if usage and usage.rolling
@@ -356,9 +501,11 @@ class Api:
         ) as client:
             account_results = await asyncio.gather(
                 *(
-                    fetch_account(client, account.get("cookie", ""))
-                    if account.get("type") != "openai"
+                    fetch_grok_account(client, account)
+                    if account.get("type") == "grok"
                     else fetch_openai_account(client, account.get("auth", {}))
+                    if account.get("type") == "openai"
+                    else fetch_account(client, account.get("cookie", ""))
                     for account in accounts
                 )
             )

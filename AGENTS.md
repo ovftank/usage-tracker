@@ -52,4 +52,3 @@ uvx <tool> # run one-off tool, no install
 
 - [pywebview API](https://pywebview.flowrl.com/guide/api.html)
 - [pywebview JS API example](https://github.com/r0x0r/pywebview/blob/docs/examples/js_api.py)
-

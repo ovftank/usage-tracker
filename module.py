@@ -7,7 +7,9 @@ import json
 import os
 import re
 import secrets
+import struct
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +32,15 @@ OPENAI_CALLBACK_PORT = 1455
 OPENAI_CALLBACK_PATH = "/auth/callback"
 OPENAI_CALLBACK_URL = f"http://localhost:{OPENAI_CALLBACK_PORT}{OPENAI_CALLBACK_PATH}"
 OPENAI_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+GROK_USAGE_URL = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
+XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token"
+XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+XAI_DEVICE_URL = "https://auth.x.ai/oauth2/device/code"
+XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access"
+XAI_DEVICE_DEFAULT_INTERVAL_S = 5
+XAI_DEVICE_MIN_INTERVAL_S = 1
+XAI_DEVICE_SLOW_DOWN_INCREMENT_S = 5
+XAI_DEVICE_DEFAULT_EXPIRES_S = 5 * 60
 DATA_DIR = (
     Path(os.getenv("LOCALAPPDATA", Path(__file__).resolve().parent)) / "UsageTracker"
 )
@@ -474,4 +485,353 @@ async def fetch_openai_account(client: httpx.AsyncClient, auth: dict) -> Account
     ) as error:
         return AccountResult(
             email="?", usage=None, api_keys=[], error=f"OpenAI usage failed: {error}"
+        )
+
+
+def _grok_headers(cookie: str = "", bearer: str = "") -> dict:
+    h = {
+        "Content-Type": "application/grpc-web+proto",
+        "x-grpc-web": "1",
+        "x-user-agent": "connect-es/2.1.1",
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+    }
+    if bearer:
+        h["Authorization"] = f"Bearer {bearer}"
+    if cookie:
+        h["Cookie"] = cookie
+    return h
+
+
+def _parse_varint(buf: bytes, pos: int):
+    result = 0
+    shift = 0
+    while pos < len(buf):
+        b = buf[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, pos
+        shift += 7
+    return result, pos
+
+
+def _read_field(buf: bytes, pos: int):
+    tag, pos = _parse_varint(buf, pos)
+    fn = tag >> 3
+    w = tag & 0x7
+    if w == 0:
+        v, pos = _parse_varint(buf, pos)
+        return fn, "var", v, pos
+    if w == 5:
+        v = struct.unpack("<I", buf[pos : pos + 4])[0]
+        pos += 4
+        return fn, "f32", v, pos
+    if w == 2:
+        ln, pos = _parse_varint(buf, pos)
+        v = buf[pos : pos + ln]
+        pos += ln
+        return fn, "len", v, pos
+    return fn, "?", None, pos
+
+
+def _get_float(raw: int) -> float:
+    return struct.unpack("<f", struct.pack("<I", raw))[0]
+
+
+def _extract_email_from_id_token(id_token: str | None) -> str | None:
+    if not id_token or not isinstance(id_token, str):
+        return None
+    try:
+        parts = id_token.split(".")
+        if len(parts) < 2:
+            return None
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(payload)
+        claims = json.loads(decoded)
+        return claims.get("email")
+    except Exception:
+        return None
+
+
+def get_xai_user_info(access_token: str) -> dict | None:
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                "https://auth.x.ai/oauth2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if resp.is_success:
+                return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+async def get_xai_user_info_async(access_token: str) -> dict | None:
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://auth.x.ai/oauth2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if resp.is_success:
+                return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def _is_grok_bot_account(auth: dict) -> bool:
+    try:
+        access = auth.get("access", "")
+        if not access:
+            return False
+        parts = access.split(".")
+        if len(parts) < 2:
+            return False
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        return bool(claims.get("bot_flag_source"))
+    except Exception:
+        return False
+
+
+def _parse_ts(buf: bytes):
+    p = 0
+    sec = None
+    nano = 0
+    while p < len(buf):
+        fn, w, v, p = _read_field(buf, p)
+        if fn == 1 and w == "var":
+            sec = v
+        elif fn == 2 and w == "var":
+            nano = v
+    if sec is None:
+        return None
+    return datetime.fromtimestamp(sec + nano / 1e9, tz=timezone.utc)
+
+
+def _parse_grok_usage(body: bytes) -> UsageItem | None:
+    try:
+        if len(body) < 5 or body[0] != 0:
+            return None
+        length = int.from_bytes(body[1:5], "big")
+        if len(body) < 5 + length:
+            return None
+        proto = body[5 : 5 + length]
+        p = 0
+        cfg = None
+        while p < len(proto):
+            fn, w, v, p = _read_field(proto, p)
+            if fn == 1 and w == "len":
+                cfg = v
+                break
+        if not cfg:
+            return None
+        p = 0
+        pct = None
+        end_dt = None
+        while p < len(cfg):
+            fn, w, v, p = _read_field(cfg, p)
+            if fn == 1 and w == "f32":
+                pct = _get_float(v)
+            elif fn == 8 and w == "len":
+                pp = 0
+                while pp < len(v):
+                    f2, w2, v2, pp = _read_field(v, pp)
+                    if f2 == 3 and w2 == "len":
+                        end_dt = _parse_ts(v2)
+        if pct is None:
+            return None
+        reset = 0
+        if end_dt:
+            delta = (end_dt - datetime.now(timezone.utc)).total_seconds()
+            reset = max(0, int(delta))
+        return UsageItem(percent=round(pct), reset_in_sec=reset)
+    except Exception:
+        return None
+
+
+async def _refresh_xai_token(
+    client: httpx.AsyncClient, refresh_token: str
+) -> dict | None:
+    try:
+        resp = await client.post(
+            XAI_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": XAI_CLIENT_ID,
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            },
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def request_xai_device_code() -> dict:
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(
+            XAI_DEVICE_URL,
+            data={"client_id": XAI_CLIENT_ID, "scope": XAI_SCOPE},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            },
+        )
+        if not resp.is_success:
+            detail = resp.text[:200]
+            raise RuntimeError(
+                f"xAI device code request failed ({resp.status_code}){detail}"
+            )
+        data = resp.json()
+        if (
+            not data.get("device_code")
+            or not data.get("user_code")
+            or not data.get("verification_uri")
+        ):
+            raise RuntimeError("Invalid device code response from xAI")
+        return data
+
+
+def start_xai_device_auth() -> dict:
+    device = request_xai_device_code()
+    url = device.get("verification_uri_complete") or device.get("verification_uri")
+    if url:
+        webbrowser.open(url)
+    return device
+
+
+def poll_xai_device_token(device: dict) -> dict:
+    device_code = device.get("device_code")
+    if not device_code:
+        raise RuntimeError("Missing device_code")
+    interval = max(
+        int(device.get("interval", XAI_DEVICE_DEFAULT_INTERVAL_S)),
+        XAI_DEVICE_MIN_INTERVAL_S,
+    )
+    expires_in = int(device.get("expires_in", XAI_DEVICE_DEFAULT_EXPIRES_S))
+    start = time.time()
+    deadline = start + expires_in
+    with httpx.Client(timeout=30) as client:
+        while time.time() < deadline:
+            resp = client.post(
+                XAI_TOKEN_URL,
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "client_id": XAI_CLIENT_ID,
+                    "device_code": device_code,
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json",
+                },
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            try:
+                body = resp.json()
+                error = body.get("error")
+            except Exception:
+                error = None
+            if error == "authorization_pending":
+                time.sleep(interval)
+                continue
+            if error == "slow_down":
+                interval += XAI_DEVICE_SLOW_DOWN_INCREMENT_S
+                time.sleep(interval)
+                continue
+            if error in ("access_denied", "authorization_denied"):
+                raise RuntimeError("xAI device authorization was denied")
+            if error == "expired_token":
+                raise RuntimeError("xAI device code expired - please re-run")
+            detail = (
+                (body.get("error_description") if isinstance(body, dict) else "")
+                or error
+                or resp.text[:100]
+            )
+            raise RuntimeError(f"xAI device token failed ({resp.status_code}){detail}")
+        raise RuntimeError("xAI device authorization timed out")
+
+
+async def fetch_grok_account(client: httpx.AsyncClient, account: dict) -> AccountResult:
+    auth = account.get("auth") or {}
+    cookie = account.get("cookie", "")
+    access = auth.get("access")
+    email = auth.get("email")
+    if not email and access:
+        ui = await get_xai_user_info_async(access)
+        if ui:
+            email = ui.get("email")
+    if not email:
+        email = "?"
+    is_bot = _is_grok_bot_account(auth)
+    if is_bot:
+        email = "BOT FLAG"
+    try:
+        if access:
+            expires = auth.get("expires", 0)
+            now = int(datetime.now(timezone.utc).timestamp() * 1000)
+            if expires and expires < now + 5 * 60 * 1000 and auth.get("refresh"):
+                refreshed = await _refresh_xai_token(client, auth["refresh"])
+                if refreshed and refreshed.get("access_token"):
+                    auth["access"] = refreshed["access_token"]
+                    access = refreshed["access_token"]
+                    if "expires_in" in refreshed:
+                        auth["expires"] = (
+                            int(datetime.now(timezone.utc).timestamp() * 1000)
+                            + int(refreshed["expires_in"]) * 1000
+                        )
+                    if "refresh_token" in refreshed:
+                        auth["refresh"] = refreshed["refresh_token"]
+            headers = _grok_headers(bearer=access)
+        elif cookie:
+            headers = _grok_headers(cookie=cookie)
+        else:
+            return AccountResult(
+                email=email, usage=None, api_keys=[], error="No grok auth or cookie"
+            )
+        resp = await client.post(
+            GROK_USAGE_URL, content=b"\x00\x00\x00\x00\x00", headers=headers
+        )
+        if resp.status_code != 200:
+            return AccountResult(
+                email=email,
+                usage=None,
+                api_keys=[],
+                error=f"Grok usage returned HTTP {resp.status_code}",
+            )
+        usage = _parse_grok_usage(resp.content)
+        if not usage:
+            if is_bot:
+                return AccountResult(
+                    email=email,
+                    usage=None,
+                    api_keys=[],
+                )
+            return AccountResult(
+                email=email,
+                usage=None,
+                api_keys=[],
+                error="Grok usage parse failed or empty",
+            )
+        return AccountResult(
+            email=email,
+            usage=AccountUsage(email=email, rolling=usage, weekly=None, monthly=None),
+            api_keys=[],
+        )
+    except (httpx.HTTPError, TypeError, ValueError) as error:
+        return AccountResult(
+            email=email, usage=None, api_keys=[], error=f"Grok usage failed: {error}"
         )
