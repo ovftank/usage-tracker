@@ -46,7 +46,7 @@ jobs:
       - name: Download build
         uses: actions/download-artifact@v8
         with:
-          name: UsageTracker
+          name: UsageTracker.exe
           path: dist
 
       - name: Create release
