@@ -1,0 +1,12 @@
+[project]
+name = "usage-tracker"
+version = "0.0.1"
+description = "https://github.com/ovftank/usage-tracker"
+requires-python = ">=3.10"
+dependencies = ["httpx==0.28.1", "pywebview==5.4"]
+
+[tool.uv]
+add-bounds = "exact"
+
+[dependency-groups]
+dev = ["pyinstaller==6.21.0", "ruff==0.15.22", "ty==0.0.61"]

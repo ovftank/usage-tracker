@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    tags: ['*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install deps
+        run: uv sync
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Build
+        run: uv run pyinstaller UsageTracker.spec
+
+      - name: Upload build
+        uses: actions/upload-artifact@v7
+        with:
+          name: UsageTracker
+          path: dist/UsageTracker.exe
+          if-no-files-found: error
+          compression-level: 0
+          archive: false
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: UsageTracker
+          path: dist
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: dist/UsageTracker.exe
+          generateReleaseNotes: true
+          name: ${{ github.ref_name }}
+          tag: ${{ github.ref_name }}
