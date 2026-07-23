@@ -520,7 +520,17 @@
                         }
                     },
                     async copyApiKey(accountIndex, keyIndex) {
-                        const res = await window.pywebview.api.copy_api_key(accountIndex, keyIndex);
+                        let res = await window.pywebview.api.copy_api_key(accountIndex, keyIndex);
+                        if (!res.ok) {
+                            this.busy = true;
+                            try {
+                                const refreshRes = await window.pywebview.api.refresh_all();
+                                this.results = refreshRes.results;
+                                res = await window.pywebview.api.copy_api_key(accountIndex, keyIndex);
+                            } finally {
+                                this.busy = false;
+                            }
+                        }
                         if (!res.ok) return;
                         try {
                             await navigator.clipboard.writeText(res.key);
@@ -552,7 +562,6 @@
                         }
                     },
                     async removeAccount(index) {
-                        if (!confirm('Remove this account? This cannot be undone.')) return;
                         const res = await window.pywebview.api.remove_account(index);
                         if (!res.ok) return;
                         this.accountCount = res.count;

@@ -436,7 +436,18 @@ class Api:
         with self._lock:
             if index < 0 or index >= len(self.accounts):
                 return {"ok": False, "error": "Invalid account"}
-            self.accounts.pop(index)
+            account = self.accounts.pop(index)
+            if account.get("type") == "openai" and OPENAI_AUTH_FILE.exists():
+                try:
+                    imported_auth = json.loads(
+                        OPENAI_AUTH_FILE.read_text(encoding="utf-8")
+                    )
+                    if imported_auth.get("accountId") == account.get("auth", {}).get(
+                        "accountId"
+                    ):
+                        OPENAI_AUTH_FILE.unlink()
+                except (OSError, json.JSONDecodeError):
+                    pass
             self._last_keys = []
             results = []
             for result in self._results:
